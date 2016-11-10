@@ -13,7 +13,7 @@ defmodule CardLabeler.Worker do
   end
 
   def init({repo, project_id, default_column_id, close_column_id}) do
-    issues_table = :etc.new(:issues, [:private])
+    issues_table = :ets.new(:issues, [:private])
 
     schedule_next_update()
 
