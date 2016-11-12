@@ -7,7 +7,8 @@ config :card_labeler, CardLabeler.GitHub,
 
 # Configures a list of tuples in the format of
 # {repo, project_id, default_column_id, close_column_id}
-# You can get the column ids via https://api.github.com/repos/:owner/:repo/projects/:project_id/columns
+# You can get project ids via https://api.github.com/repos/:owner/:repo/projects
+# You can get the column ids via https://api.github.com/projects/:project_id/columns
 config :card_labeler, CardLabeler,
   worker_configs: [
     {"owner/repo", 1, 42, 24},
