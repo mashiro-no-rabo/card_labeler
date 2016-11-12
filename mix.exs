@@ -11,7 +11,7 @@ defmodule CardLabeler.Mixfile do
   end
 
   def application do
-    [applications: [:logger, :httpoison],
+    [applications: [:logger, :httpoison, :crypto],
      mod: {CardLabeler, []}]
   end
 
