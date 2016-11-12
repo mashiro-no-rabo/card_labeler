@@ -4,7 +4,7 @@ defmodule CardLabeler.Worker do
   @interval Application.get_env(:card_labeler, CardLabeler.Worker)[:interval] * 1000
 
   defmodule State do
-    defstruct [:repo, :project_id, :default_column_id, :close_column_id
+    defstruct [:repo, :project_id, :default_column_id, :close_column_id,
                :last_update, :issues_table]
   end
 
