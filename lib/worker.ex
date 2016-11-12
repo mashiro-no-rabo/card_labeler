@@ -60,6 +60,14 @@ defmodule CardLabeler.Worker do
       add_to_found_column_or_default(issue_id, state.default_column_id, issue_labels, nil, column_name_to_ids)
     end)
 
+    # TODO: updated_issue_ids only contains open issues, so if we see a issue with label_name on close_column,
+    #   we should remove the label, then put it into default_column
+
+    # Step 4.5: Fetch each column's cards again
+    issues_columns =
+      Enum.flat_map(columns_resp.body, &get_column_cards/1)
+      |> Enum.into(%{})
+
     # Step 5: Assign correct labels
     Enum.each(issues_columns, fn {issue_id, column_name} ->
       # Remove labels if this issue has a label same as another column's name
@@ -72,6 +80,12 @@ defmodule CardLabeler.Worker do
     end)
 
     # Step 6: Close Issues in closed_column
+    issues_columns
+    |> Enum.each( fn {issue_id, column_name} ->
+      if column_name_to_ids[column_name] == state.close_column_id do
+        GitHub.patch!("/repos/#{state.repo}/issues/#{issue_id}", "{\"state\":\"closed\"}")
+      end
+    end)
 
     schedule_next_update()
     {:noreply, %State{ state | last_update: this_update_time }}
