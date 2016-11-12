@@ -37,7 +37,11 @@ defmodule CardLabeler.Worker do
 
     Enum.each(issues_resp.body, &(save_issue_labels(state.issues_table, &1)))
     # only care about open issues
-    updated_issue_ids = Enum.filter_map(issues_resp.body, fn issue -> issue["state"] == "open" end, fn issue -> issue["number"] end)
+    updated_issue_ids = Enum.filter_map(issues_resp.body, fn issue -> String.equivalent?(issue["state"], "open") end, fn issue -> issue["number"] end)
+    issue_real_id = Enum.filter_map(issues_resp.body,
+      fn issue -> String.equivalent?(issue["state"], "open") end,
+      fn issue -> {issue["number"], issue["id"]} end)
+      |> Enum.into(%{})
 
     # Step 2: Fetch Project columns, then fetch all cards for each column
     columns_resp = GitHub.get!("/projects/#{state.project_id}/columns")
@@ -58,7 +62,8 @@ defmodule CardLabeler.Worker do
     end)
     |> Enum.each( fn issue_id ->
       {_, issue_labels} = :ets.lookup(state.issues_table, issue_id) |> List.first
-      add_to_found_column_or_default(issue_id, state.default_column_id, issue_labels, nil, column_name_to_ids)
+      real_id = issue_real_id[issue_id]
+      add_to_found_column_or_default(real_id, state.default_column_id, issue_labels, nil, column_name_to_ids)
     end)
 
     # Step 4.5: Fetch each column's cards again

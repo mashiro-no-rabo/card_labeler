@@ -16,6 +16,6 @@ config :card_labeler, CardLabeler,
 
 # Configures the interval between worker updates
 config :card_labeler, CardLabeler.Worker,
-  interval: 120
+  interval: 60
 
 import_config "secrets.exs"
