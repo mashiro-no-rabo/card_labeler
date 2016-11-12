@@ -36,7 +36,8 @@ defmodule CardLabeler.Worker do
     issues_resp = build_issues_url(state.repo, state.last_update) |> GitHub.get!()
 
     Enum.each(issues_resp.body, &(save_issue_labels(state.issues_table, &1)))
-    updated_issue_ids = Enum.map(issues_resp.body, fn issue -> issue["number"] end)
+    # only care about open issues
+    updated_issue_ids = Enum.filter_map(issues_resp.body, fn issue -> issue["state"] == "open" end, fn issue -> issue["number"] end)
 
     # Step 2: Fetch Project columns, then fetch all cards for each column
     columns_resp = GitHub.get!("/projects/#{state.project_id}/columns")
@@ -59,9 +60,6 @@ defmodule CardLabeler.Worker do
       {_, issue_labels} = :ets.lookup(state.issues_table, issue_id) |> List.first
       add_to_found_column_or_default(issue_id, state.default_column_id, issue_labels, nil, column_name_to_ids)
     end)
-
-    # TODO: updated_issue_ids only contains open issues, so if we see a issue with label_name on close_column,
-    #   we should remove the label, then put it into default_column
 
     # Step 4.5: Fetch each column's cards again
     issues_columns =
@@ -96,8 +94,8 @@ defmodule CardLabeler.Worker do
     Process.send_after(self(), :update, time)
   end
 
-  defp build_issues_url(repo, nil), do: "/repos/#{repo}/issues?per_page=100"
-  defp build_issues_url(repo, last_update), do: "/repos/#{repo}/issues?per_page=100&since=#{last_update}"
+  defp build_issues_url(repo, nil), do: "/repos/#{repo}/issues?per_page=100&state=all"
+  defp build_issues_url(repo, last_update), do: "/repos/#{repo}/issues?per_page=100&state=all&since=#{last_update}"
 
   defp save_issue_labels(table_id, issue) do
     issue_id = issue["number"]
