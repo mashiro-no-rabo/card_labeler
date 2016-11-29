@@ -18,4 +18,6 @@ defmodule CardLabeler.GitHub do
   defp process_response_body(body) do
     Poison.decode!(body)
   end
+
+  defp process_headers(headers), do: Enum.into(headers, %{})
 end
