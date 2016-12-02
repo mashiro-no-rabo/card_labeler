@@ -5,88 +5,107 @@ defmodule CardLabeler.Worker do
   @interval Application.get_env(:card_labeler, CardLabeler.Worker)[:interval] * 1000
 
   defmodule State do
-    defstruct [:repo, :project_id, :default_column_id, :close_column_id,
-               :last_update, :issues_table]
+    defstruct [:repo, :project_id, :last_update,
+               :columns,
+               :new_col, :close_col]
+  end
+
+  defmodule Issue do
+    # issue["number"] as key
+    defstruct [:id, :state, :labels, :column, :card_id]
   end
 
   def start_link(config) do
     GenServer.start_link(__MODULE__, config)
   end
 
-  def init({repo, project_id, default_column_id, close_column_id}) do
+  def init({repo, project_id, new_col, close_col}) do
     GitHub.start
 
-    issues_table = :ets.new(:issues, [])
+    # TODO: This does not work for multiple config
+    Agent.start_link(&Map.new/0, name: :issues)
 
-    schedule_next_update(5)
+    # Assuming Project columns to be static
+    columns =
+      GitHub.get!("/projects/#{project_id}/columns")
+      |> Map.get(:body)
+      |> Enum.map(fn column -> {column["id"], column["name"]} end) # TODO: change to id->name, use Enum.find
+      |> Enum.into(%{})
 
     state = %State{repo: repo,
                    project_id: project_id,
-                   default_column_id: default_column_id,
-                   close_column_id: close_column_id,
-                   issues_table: issues_table}
+                   columns: columns,
+                   new_col: new_col,
+                   close_col: close_col,
+                  }
+
+    schedule_next_update(5)
+
     {:ok, state}
   end
 
   def handle_info(:update, state) do
     this_update_time = DateTime.utc_now() |> DateTime.to_iso8601()
 
-    # Step 1: Fetch all Issues, since last update if available
-    # Be ware issue["id"] is not the number in URI you normally see, that's issue["number"]
-    issues_resp = build_issues_url(state.repo, state.last_update) |> GitHub.get!()
+    # Step 1: Fetch all Issues, since last_update if applicable
+    updated_issues = fetch_updated_issues(state.repo, state.last_update, 1, [])
 
-    Enum.each(issues_resp.body, &(save_issue_labels(state.issues_table, &1)))
-    # only care about open issues
-    updated_issue_ids = Enum.filter_map(issues_resp.body, fn issue -> String.equivalent?(issue["state"], "open") end, fn issue -> issue["number"] end)
-    issue_real_id = Enum.filter_map(issues_resp.body,
-      fn issue -> String.equivalent?(issue["state"], "open") end,
-      fn issue -> {issue["number"], issue["id"]} end)
-      |> Enum.into(%{})
-
-    # Step 2: Fetch Project columns, then fetch all cards for each column
-    columns_resp = GitHub.get!("/projects/#{state.project_id}/columns")
-    column_name_to_ids = Enum.map(columns_resp.body, fn column -> {column["name"], column["id"]} end) |> Enum.into(%{})
-
-    # Step 3: Fetch each column's cards, filter out Issues, save issue_id -> column_name
-    issues_columns =
-      Enum.flat_map(columns_resp.body, &get_column_cards/1)
-      |> Enum.into(%{})
-
-    # Step 4: Move new Issues into correct column or the default column
-    # Do this first, because if there's a new Issue with 2 labels in column_names
-    # We pick up whatever comes first and add it into that column
-    # Then rely on next step to fix it
-    updated_issue_ids
-    |> Enum.filter( fn issue_id ->
-      not Map.has_key?(issues_columns, issue_id)
-    end)
-    |> Enum.each( fn issue_id ->
-      {_, issue_labels} = :ets.lookup(state.issues_table, issue_id) |> List.first
-      real_id = issue_real_id[issue_id]
-      add_to_found_column_or_default(real_id, state.default_column_id, issue_labels, nil, column_name_to_ids)
+    # Step 2: Update each column's issues
+    state.columns
+    |> Enum.each(fn {id, _name} ->
+      update_issues_in_column(id)
     end)
 
-    # Step 4.5: Fetch each column's cards again
-    issues_columns =
-      Enum.flat_map(columns_resp.body, &get_column_cards/1)
-      |> Enum.into(%{})
+    # Step 3: Move closed issues to close_col, add new issues as cards
+    updated_issues
+    |> Enum.each(fn issue_num ->
+      issue_data = Agent.get(:issues, &(Map.get(&1, issue_num)))
+      if issue_data.state == "closed" do
+        if issue_data.card_id != nil and issue_data.column != state.close_col do
+          GitHub.post!("/projects/columns/cards/#{issue_data.card_id}/moves",
+            "{\"position\": \"bottom\", \"column_id\": #{state.close_col}}")
 
-    # Step 5: Assign correct labels
-    Enum.each(issues_columns, fn {issue_id, column_name} ->
-      # Remove labels if this issue has a label same as another column's name
-      remove_wrong_labels(state.issues_table, state.repo, issue_id, Map.delete(column_name_to_ids, column_name) |> Map.to_list)
+          Agent.update(:issues, &(Map.update!(&1, issue_num, fn issue_data -> %Issue{ issue_data | column: state.close_col } end)))
+        end
+      else
+        if issue_data.card_id == nil do
+          {card_id, col} = add_issue_card(issue_data.id, issue_data.labels, state.columns, state.new_col)
 
-      # Set correct label if not already present
-      unless issue_has_label?(state.issues_table, issue_id, column_name) do
-        GitHub.post!("/repos/#{state.repo}/issues/#{issue_id}/labels", "[\"#{column_name}\"]")
+          Agent.update(:issues, &(Map.update!(&1, issue_num, fn issue_data -> %Issue{ issue_data | card_id: card_id, column: col } end)))
+        end
       end
     end)
 
-    # Step 6: Close Issues in closed_column
-    issues_columns
-    |> Enum.each( fn {issue_id, column_name} ->
-      if column_name_to_ids[column_name] == state.close_column_id do
-        GitHub.patch!("/repos/#{state.repo}/issues/#{issue_id}", "{\"state\":\"closed\"}")
+    # Step 4: Assign correct label
+    wrong_labels_for_column =
+      Enum.map(state.columns, fn {id, name} ->
+        wrong_labels =
+          Map.keys(state.columns)
+          |> List.delete(name)
+
+        {id, wrong_labels}
+      end)
+      |> Enum.into(%{})
+
+    Agent.get(:issues, &(&1))
+    |> Enum.each(fn {issue_num, issue_data} ->
+      if issue_data.column != nil do
+        wrong_labels =
+          Enum.filter(issue_data.labels, fn label_name ->
+            Map.get(wrong_labels_for_column, issue_data.column)
+            |> Enum.member?(label_name)
+          end)
+
+        Enum.each(wrong_labels, &(GitHub.delete!("/repos/#{state.repo}/issues/#{issue_num}/labels/#{&1}")))
+        Agent.update(:issues, &(Map.update!(&1, issue_num, fn issue_data -> %Issue{ issue_data | labels: issue_data.labels -- wrong_labels } end)))
+      end
+    end)
+
+    # Step 5: Close any open issue in close_col
+    Agent.get(:issues, &(&1))
+    |> Enum.each(fn {issue_num, issue_data} ->
+      if issue_data.column == state.close_col and issue_data.state == "open" do
+        GitHub.patch!("/repos/#{state.repo}/issues/#{issue_num}", "{\"state\":\"closed\"}")
       end
     end)
 
@@ -99,52 +118,73 @@ defmodule CardLabeler.Worker do
     Process.send_after(self(), :update, time)
   end
 
-  defp build_issues_url(repo, nil), do: "/repos/#{repo}/issues?per_page=100&state=all"
-  defp build_issues_url(repo, last_update), do: "/repos/#{repo}/issues?per_page=100&state=all&since=#{last_update}"
+  defp build_issues_url(repo, nil, page), do: "/repos/#{repo}/issues?per_page=100&page=#{page}&state=all"
+  defp build_issues_url(repo, last_update, page), do: "/repos/#{repo}/issues?per_page=100&page=#{page}&state=all&since=#{last_update}"
 
-  defp save_issue_labels(table_id, issue) do
-    issue_id = issue["number"]
-    label_names = Enum.map(issue["labels"], fn label -> label["name"] end)
-    :ets.insert(table_id, {issue_id, label_names})
-  end
+  defp has_next_page?(response), do: response.headers |> Map.get("Link", "") |> String.contains?("rel=\"next\"")
 
-  # Returns [{id, name}, {id, name}, ...]
-  defp get_column_cards(column) do
-    cards_resp = GitHub.get!("/projects/columns/#{column["id"]}/cards")
+  defp fetch_updated_issues(repo, last_update, page, acc) do
+    resp = build_issues_url(repo, last_update, page) |> GitHub.get!()
 
-    Enum.filter_map(cards_resp.body,
-      fn card ->
-        Map.has_key?(card, "content_url") and String.contains?(card["content_url"], "/issues/")
-      end,
-      fn card ->
-        issue_id = card["content_url"] |> String.split("/") |> List.last |> String.to_integer
-        {issue_id, column["name"]}
+    Enum.each(resp.body, fn issue ->
+      label_names = Enum.map(issue["labels"], fn label -> label["name"] end)
+
+      Agent.update(:issues, fn issues ->
+        Map.update(issues, issue["number"],
+          %Issue{id: issue["id"], state: issue["state"], labels: label_names },
+          fn issue_data ->
+            %Issue{ issue_data | state: issue["state"], labels: label_names }
+          end)
       end)
-  end
+    end)
 
-  defp issue_has_label?(table_id, issue_id, label_name) do
-    {_, issue_labels} = :ets.lookup(table_id, issue_id) |> List.first
-    Enum.member?(issue_labels, label_name)
-  end
+    updated_issues = Enum.map(resp.body, fn issue -> issue["number"] end)
+    new_acc = acc ++ updated_issues
 
-  defp remove_wrong_labels(_table_id, _repo, _issue_id, []), do: nil
-  defp remove_wrong_labels(table_id, repo, issue_id, [{label_name, _label_id} | rest]) do
-    if issue_has_label?(table_id, issue_id, label_name) do
-      GitHub.delete!("/repos/#{repo}/issues/#{issue_id}/labels/#{label_name}")
-    end
-    remove_wrong_labels(table_id, repo, issue_id, rest)
-  end
-
-  # issue_id, default_column_id, issue_labels, found_label, column_name_to_ids
-  defp add_to_found_column_or_default(issue_id, default_column_id, [], nil, _) do
-    GitHub.post!("/projects/columns/#{default_column_id}/cards", "{\"content_id\":#{issue_id},\"content_type\":\"Issue\"}")
-  end
-  defp add_to_found_column_or_default(issue_id, default_column_id, [label_name | rest], _, column_name_to_ids) do
-    if Map.has_key?(column_name_to_ids, label_name) do
-      column_id = column_name_to_ids[label_name]
-      GitHub.post!("/projects/columns/#{column_id}/cards", "{\"content_id\":#{issue_id},\"content_type\":\"Issue\"}")
+    if has_next_page?(resp) do
+      fetch_updated_issues(repo, last_update, page + 1, new_acc)
     else
-      add_to_found_column_or_default(issue_id, default_column_id, rest, nil, column_name_to_ids)
+      new_acc
+    end
+  end
+
+  defp update_issues_in_column(column_id) do
+    GitHub.get!("/projects/columns/#{column_id}/cards")
+    |> Map.get(:body)
+    |> Enum.filter_map(
+    fn card ->
+      Map.has_key?(card, "content_url") and String.contains?(card["content_url"], "/issues/")
+    end,
+    fn card ->
+      issue_num = card["content_url"] |> String.split("/") |> List.last |> String.to_integer
+      Agent.update(:issues, fn issues ->
+        Map.update(issues, issue_num, %Issue{}, fn issue_data ->
+          %Issue{ issue_data | column: column_id, card_id: card["id"]}
+        end)
+      end)
+    end)
+  end
+
+  defp add_issue_card(issue_id, [], _columns, new_col) do
+    card_id =
+      GitHub.post!("/projects/columns/#{new_col}/cards", "{\"content_id\":#{issue_id},\"content_type\":\"Issue\"}")
+      |> Map.get(:body)
+      |> Map.get("id")
+
+    {card_id, new_col}
+  end
+  defp add_issue_card(issue_id, [label_name | rest_labels], columns, new_col) do
+    {col, _name} = Enum.find(columns, nil, fn {_id, name} -> name == label_name end)
+
+    if col != nil do
+      card_id =
+        GitHub.post!("/projects/columns/#{col}/cards", "{\"content_id\":#{issue_id},\"content_type\":\"Issue\"}")
+        |> Map.get(:body)
+        |> Map.get("id")
+
+      {card_id, col}
+    else
+      add_issue_card(issue_id, rest_labels, columns, new_col)
     end
   end
 end
