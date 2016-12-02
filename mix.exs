@@ -3,7 +3,7 @@ defmodule CardLabeler.Mixfile do
 
   def project do
     [app: :card_labeler,
-     version: "0.1.0",
+     version: "0.2.0",
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
@@ -11,7 +11,7 @@ defmodule CardLabeler.Mixfile do
   end
 
   def application do
-    [applications: [:logger, :httpoison, :crypto],
+    [applications: [:logger, :httpoison, :crypto, :sasl],
      mod: {CardLabeler, []}]
   end
 
