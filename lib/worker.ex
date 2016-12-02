@@ -80,7 +80,7 @@ defmodule CardLabeler.Worker do
     wrong_labels_for_column =
       Enum.map(state.columns, fn {id, name} ->
         wrong_labels =
-          Map.keys(state.columns)
+          Map.values(state.columns)
           |> List.delete(name)
 
         {id, wrong_labels}
@@ -96,8 +96,15 @@ defmodule CardLabeler.Worker do
             |> Enum.member?(label_name)
           end)
 
-        Enum.each(wrong_labels, &(GitHub.delete!("/repos/#{state.repo}/issues/#{issue_num}/labels/#{&1}")))
+        Enum.each(wrong_labels, &(GitHub.delete!("/repos/#{state.repo}/issues/#{issue_num}/labels/#{URI.encode(&1)}")))
         Agent.update(:issues, &(Map.update!(&1, issue_num, fn issue_data -> %Issue{ issue_data | labels: issue_data.labels -- wrong_labels } end)))
+
+        correct_label = Map.get(state.columns, issue_data.column)
+        unless Enum.member?(issue_data.labels, correct_label) do
+          GitHub.post!("/repos/#{state.repo}/issues/#{issue_num}/labels", "[\"#{correct_label}\"]")
+
+          Agent.update(:issues, &(Map.update!(&1, issue_num, fn issue_data -> %Issue{ issue_data | labels: [correct_label | issue_data.labels] } end)))
+        end
       end
     end)
 
@@ -157,10 +164,13 @@ defmodule CardLabeler.Worker do
     end,
     fn card ->
       issue_num = card["content_url"] |> String.split("/") |> List.last |> String.to_integer
+
       Agent.update(:issues, fn issues ->
-        Map.update(issues, issue_num, %Issue{}, fn issue_data ->
-          %Issue{ issue_data | column: column_id, card_id: card["id"]}
-        end)
+        Map.update(issues, issue_num,
+          %Issue{ column: column_id, card_id: card["id"] },
+          fn issue_data ->
+            %Issue{ issue_data | column: column_id, card_id: card["id"]}
+          end)
       end)
     end)
   end
