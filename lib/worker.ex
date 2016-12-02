@@ -174,7 +174,7 @@ defmodule CardLabeler.Worker do
     {card_id, new_col}
   end
   defp add_issue_card(issue_id, [label_name | rest_labels], columns, new_col) do
-    {col, _name} = Enum.find(columns, nil, fn {_id, name} -> name == label_name end)
+    {col, _name} = Enum.find(columns, {nil, nil}, fn {_id, name} -> name == label_name end)
 
     if col != nil do
       card_id =
