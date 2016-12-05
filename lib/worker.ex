@@ -63,7 +63,7 @@ defmodule CardLabeler.Worker do
       if issue_data.state == "closed" do
         if issue_data.card_id != nil and issue_data.column != state.close_col do
           GitHub.post!("/projects/columns/cards/#{issue_data.card_id}/moves",
-            "{\"position\": \"bottom\", \"column_id\": #{state.close_col}}")
+            "{\"position\": \"top\", \"column_id\": #{state.close_col}}")
 
           Agent.update(:issues, &(Map.update!(&1, issue_num, fn issue_data -> %Issue{ issue_data | column: state.close_col } end)))
         end
