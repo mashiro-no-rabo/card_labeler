@@ -3,21 +3,21 @@ defmodule CardLabeler.Mixfile do
 
   def project do
     [app: :card_labeler,
-     version: "0.2.0",
-     elixir: "~> 1.3",
+     version: "0.3.0",
+     elixir: "~> 1.4",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
      deps: deps()]
   end
 
   def application do
-    [applications: [:logger, :httpoison, :crypto, :sasl],
+    [extra_applications: [:logger, :crypto, :sasl],
      mod: {CardLabeler, []}]
   end
 
   defp deps do
     [
-      {:httpoison, "~> 0.10.0"},
+      {:httpoison, "~> 0.11.0"},
       {:poison, "~> 3.0"},
     ]
   end
