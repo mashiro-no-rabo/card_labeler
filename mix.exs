@@ -17,9 +17,10 @@ defmodule CardLabeler.Mixfile do
 
   defp deps do
     [
-      {:httpoison, "~> 0.11.0"},
-      {:poison, "~> 3.0"},
-      {:logger_papertrail_backend, "~> 0.2"}
+      {:tesla, "~> 0.7.1"},
+      {:hackney, "~> 1.8"},
+      {:poison, "~> 3.1"},
+      {:logger_papertrail_backend, "~> 0.2"},
     ]
   end
 end

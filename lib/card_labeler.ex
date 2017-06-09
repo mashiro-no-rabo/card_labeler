@@ -1,15 +1,16 @@
 defmodule CardLabeler do
   use Application
+  alias CardLabeler.ReposSupervisor
 
   def start(_type, _args) do
     import Supervisor.Spec, warn: false
 
-    children =
-      Enum.map(Application.get_env(:card_labeler, CardLabeler)[:worker_configs], fn config ->
-        worker(CardLabeler.Worker, [config], restart: :transient)
-      end)
+    children = [
+      supervisor(Registry, [:unique, CardLabeler.Registry]),
+      supervisor(ReposSupervisor, [])
+    ]
 
-    opts = [strategy: :one_for_one, name: CardLabeler.Supervisor]
+    opts = [strategy: :rest_for_one, name: CardLabeler.RootSupervisor]
     Supervisor.start_link(children, opts)
   end
 end

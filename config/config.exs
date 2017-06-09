@@ -9,8 +9,8 @@ config :card_labeler, CardLabeler.GitHub,
 # {repo, project_id, new_col, close_col}
 # You can get project ids via https://api.github.com/repos/:owner/:repo/projects
 # You can get the column ids via https://api.github.com/projects/:project_id/columns
-config :card_labeler, CardLabeler,
-  worker_configs: [
+config :card_labeler, CardLabeler.ReposSupervisor,
+  repo_configs: [
     {"owner/repo", 1, 42, 24},
   ]
 
@@ -18,4 +18,5 @@ config :card_labeler, CardLabeler,
 config :card_labeler, CardLabeler.Worker,
   interval: 60
 
+# Provide your configs to overwrite in "secrets.exs"
 import_config "secrets.exs"
