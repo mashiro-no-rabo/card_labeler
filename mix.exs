@@ -19,6 +19,7 @@ defmodule CardLabeler.Mixfile do
     [
       {:httpoison, "~> 0.11.0"},
       {:poison, "~> 3.0"},
+      {:logger_papertrail_backend, "~> 0.2"}
     ]
   end
 end
