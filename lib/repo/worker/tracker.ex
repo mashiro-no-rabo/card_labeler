@@ -202,6 +202,9 @@ defmodule CardLabeler.Repo.Tracker do
   end
   def updating(:info, :updated, data), do: {:next_state, :resting, data}
 
+  def terminate(_, _, _), do: :void
+  def code_change(_, state, data, _), do: {:ok, state, data}
+
   ## Private Functions
   defp schedule_next_track(time \\ @interval) do
     Process.send_after(self(), :track, time)
