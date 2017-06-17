@@ -50,7 +50,7 @@ defmodule CardLabeler.GitHubV3 do
 
   defp has_next_page?(response) do
     response.headers
-    |> Map.get("Link", "")
+    |> Map.get("link", "")
     |> String.contains?("rel=\"next\"")
   end
 
