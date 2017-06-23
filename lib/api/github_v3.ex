@@ -10,7 +10,7 @@ defmodule CardLabeler.GitHubV3 do
     "Authorization" => @token,
   }
   plug Tesla.Middleware.JSON
-  plug Tesla.Middleware.Retry
+  plug CardLabeler.TeslaMiddleWare.BackoutRetry
   plug Tesla.Middleware.DebugLogger
 
   adapter Tesla.Adapter.Hackney
