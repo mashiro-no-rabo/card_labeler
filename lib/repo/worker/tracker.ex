@@ -4,7 +4,7 @@ defmodule CardLabeler.Repo.Tracker do
   alias CardLabeler.Names
   alias CardLabeler.GitHubV3, as: GitHub
   alias CardLabeler.Repo.AgentStorage, as: Storage
-  alias CardLabeler.Models.Issue
+  alias CardLabeler.Models.IssueCard
 
   require Logger
 
@@ -95,9 +95,9 @@ defmodule CardLabeler.Repo.Tracker do
       label_names = Enum.map(issue["labels"], fn label -> label["name"] end)
 
       Storage.update(data.repo, issue["number"],
-        %Issue{id: issue["id"], state: issue["state"], labels: label_names },
-        fn issue_data ->
-          %Issue{ issue_data | state: issue["state"], labels: label_names }
+        %IssueCard{id: issue["id"], state: issue["state"], labels: label_names },
+        fn issue_card ->
+          %IssueCard{ issue_card | state: issue["state"], labels: label_names }
         end)
     end)
 
@@ -108,9 +108,9 @@ defmodule CardLabeler.Repo.Tracker do
         issue_num = card["content_url"] |> String.split("/") |> List.last |> String.to_integer
 
         Storage.update(data.repo, issue_num,
-          %Issue{ column: col_id, card_id: card["id"] },
-          fn issue_data ->
-            %Issue{ issue_data | column: col_id, card_id: card["id"]}
+          %IssueCard{ column: col_id, card_id: card["id"] },
+          fn issue_card ->
+            %IssueCard{ issue_card | column: col_id, card_id: card["id"]}
           end)
       end)
     end)
@@ -120,29 +120,29 @@ defmodule CardLabeler.Repo.Tracker do
     updated_issues
     |> Enum.map(fn issue -> issue["number"] end)
     |> Enum.each(fn issue_num ->
-      issue_data = Storage.get(data.repo, issue_num)
+      issue_card = Storage.get(data.repo, issue_num)
 
-      if issue_data.state == "closed" do
-        if issue_data.card_id != nil and issue_data.column != data.close_col do
+      if issue_card.state == "closed" do
+        if issue_card.card_id != nil and issue_card.column != data.close_col do
           GitHub.move_card(
-            issue_data.card_id,
+            issue_card.card_id,
             data.close_col
           )
 
           Storage.update!(data.repo, issue_num,
-            fn issue_data -> %Issue{ issue_data | column: data.close_col } end
+            fn issue_card -> %IssueCard{ issue_card | column: data.close_col } end
           )
         end
       else
-        if issue_data.card_id == nil do
+        if issue_card.card_id == nil do
           {col_id, _name} = Enum.find(data.columns,
             {data.new_col, nil},
-            fn {_col_id, name} -> Enum.member?(issue_data.labels, name) end
+            fn {_col_id, name} -> Enum.member?(issue_card.labels, name) end
           )
-          card_id = GitHub.add_card(col_id, issue_data.id)
+          card_id = GitHub.add_card(col_id, issue_card.id)
 
           Storage.update!(data.repo, issue_num,
-            fn issue_data -> %Issue{ issue_data | card_id: card_id, column: col_id } end
+            fn issue_card -> %IssueCard{ issue_card | card_id: card_id, column: col_id } end
           )
         end
       end
@@ -151,26 +151,26 @@ defmodule CardLabeler.Repo.Tracker do
 
     # Maintain correct labels
     Storage.get_all(data.repo)
-    |> Enum.each(fn {issue_num, issue_data} ->
-      if issue_data.column != nil do
+    |> Enum.each(fn {issue_num, issue_card} ->
+      if issue_card.column != nil do
         wrong_labels =
-          Enum.filter(issue_data.labels, fn label_name ->
-            Map.get(data.wrong_labels_for_column, issue_data.column)
+          Enum.filter(issue_card.labels, fn label_name ->
+            Map.get(data.wrong_labels_for_column, issue_card.column)
             |> Enum.member?(label_name)
           end)
 
         Enum.each(wrong_labels, &(GitHub.remove_label(data.repo, issue_num, &1)))
 
         Storage.update!(data.repo, issue_num,
-          fn issue_data -> %Issue{ issue_data | labels: issue_data.labels -- wrong_labels } end
+          fn issue_card -> %IssueCard{ issue_card | labels: issue_card.labels -- wrong_labels } end
         )
 
-        correct_label = Map.get(data.columns, issue_data.column)
-        unless Enum.member?(issue_data.labels, correct_label) do
+        correct_label = Map.get(data.columns, issue_card.column)
+        unless Enum.member?(issue_card.labels, correct_label) do
           GitHub.add_label(data.repo, issue_num, correct_label)
 
           Storage.update!(data.repo, issue_num,
-            fn issue_data -> %Issue{ issue_data | labels: [correct_label | issue_data.labels] } end
+            fn issue_card -> %IssueCard{ issue_card | labels: [correct_label | issue_card.labels] } end
           )
         end
       end
@@ -190,8 +190,8 @@ defmodule CardLabeler.Repo.Tracker do
     Logger.debug("tracking -> updating")
     # Close any open issue in close_col
     Storage.get_all(data.repo)
-    |> Enum.each(fn {issue_num, issue_data} ->
-      if issue_data.column == data.close_col and issue_data.state == "open" do
+    |> Enum.each(fn {issue_num, issue_card} ->
+      if issue_card.column == data.close_col and issue_card.state == "open" do
         GitHub.close_issue(data.repo, issue_num)
       end
     end)
